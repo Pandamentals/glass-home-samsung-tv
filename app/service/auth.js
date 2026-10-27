@@ -1,5 +1,5 @@
 // Glass Home service - passwords, sessions and login throttling.
-// Node 12 API only: crypto.pbkdf2, randomBytes, timingSafeEqual, createHash.
+// Node 4 safe: crypto.pbkdf2, randomBytes, createHash; no Buffer.from(text), timingSafeEqual only when present.
 'use strict';
 var crypto = require('crypto');
 var WORDS = require('./words.js');
@@ -41,10 +41,26 @@ function canonicalGenerated(pw) {
   return String(pw).trim().toLowerCase().replace(/[\s._\u2013\u2014-]+/g, '-');
 }
 
+// The TV's service runs Node 4.4: Buffer.from there is Uint8Array.from, which
+// does not decode text, so Buffer.from(text, 'base64') gives the wrong thing.
+function bufFromString(text, encoding) {
+  if (typeof Buffer.from === 'function' && Buffer.from !== Uint8Array.from) return Buffer.from(text, encoding);
+  return new Buffer(text, encoding);
+}
+
+// crypto.timingSafeEqual is missing there too (it arrived in Node 6.6).
+function bufEqual(a, b) {
+  if (a.length !== b.length) return false;
+  if (typeof crypto.timingSafeEqual === 'function') return crypto.timingSafeEqual(a, b);
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
 function timingSafeEqualStr(a, b) {
   var ha = crypto.createHash('sha256').update(String(a)).digest();
   var hb = crypto.createHash('sha256').update(String(b)).digest();
-  return crypto.timingSafeEqual(ha, hb) && String(a).length === String(b).length;
+  return bufEqual(ha, hb) && String(a).length === String(b).length;
 }
 
 function hashPassword(plain, iterations, generated) {
@@ -72,10 +88,10 @@ function verifyPassword(attempt, rec) {
     var s = String(attempt == null ? '' : attempt);
     if (!s || s.length > MAX_PASSWORD_LEN) return resolve(false);
     var input = rec.generated ? canonicalGenerated(s) : s;
-    crypto.pbkdf2(input, Buffer.from(rec.salt, 'base64'), rec.iter, KEY_LEN, 'sha256', function (err, key) {
+    crypto.pbkdf2(input, bufFromString(rec.salt, 'base64'), rec.iter, KEY_LEN, 'sha256', function (err, key) {
       if (err) return reject(err);
-      var expected = Buffer.from(rec.hash, 'base64');
-      resolve(key.length === expected.length && crypto.timingSafeEqual(key, expected));
+      var expected = bufFromString(rec.hash, 'base64');
+      resolve(bufEqual(key, expected));
     });
   });
 }
@@ -214,6 +230,7 @@ module.exports = {
   generatePassword: generatePassword,
   canonicalGenerated: canonicalGenerated,
   timingSafeEqualStr: timingSafeEqualStr,
+  bufFromString: bufFromString,
   hashPassword: hashPassword,
   verifyPassword: verifyPassword,
   Limiter: Limiter,

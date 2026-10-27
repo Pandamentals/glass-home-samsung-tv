@@ -10,8 +10,10 @@
 var http = require('http');
 var https = require('https');
 var dns = require('dns');
+var fs = require('fs');
+var path = require('path');
 var zlib = require('zlib');
-var URLc = require('url').URL;
+var URLc = require('./urlshim.js').URL;
 var netu = require('./netutil.js');
 var img = require('./imageutil.js');
 var yt = require('../js/ytparse.js');
@@ -44,8 +46,39 @@ function decoderFor(encoding) {
   return null;
 }
 
-// GET a URL. Resolves { status, headers, body (Buffer), url } after redirects.
+// The TV's Node (4.4, from 2016) ships an old list of trusted root certificates,
+// so sites on newer chains (Let's Encrypt's ISRG Root X1, as Open-Meteo uses)
+// fail with "unable to get local issuer certificate". When that happens the
+// request is repeated once with a current list of roots, app/service/cacert.pem.
+var trust;                       // undefined: not read yet; null: none; else array of PEMs
+function trustBundle() {
+  if (trust !== undefined) return trust;
+  trust = null;
+  try {
+    var pems = fs.readFileSync(path.join(__dirname, 'cacert.pem'), 'utf8').match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+    if (pems && pems.length) trust = pems;
+  } catch (e) { /* no bundle: the first error stands */ }
+  return trust;
+}
+function isTrustError(e) {
+  var c = e && e.code;
+  return c === 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY' || c === 'UNABLE_TO_GET_ISSUER_CERT' ||
+    c === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' || /issuer certificate|unable to verify the first certificate/i.test(String(e && e.message));
+}
+
 function get(url, opts) {
+  return rawGet(url, opts).catch(function (e) {
+    var ca = !(opts && opts.ca) && isTrustError(e) ? trustBundle() : null;
+    if (!ca) throw e;
+    var o = {};
+    Object.keys(opts || {}).forEach(function (k) { o[k] = opts[k]; });
+    o.ca = ca;
+    return rawGet(url, o);
+  });
+}
+
+// GET a URL. Resolves { status, headers, body (Buffer), url } after redirects.
+function rawGet(url, opts) {
   opts = opts || {};
   var maxBytes = opts.maxBytes || 512 * 1024;
   var timeout = opts.timeout || 8000;
@@ -74,6 +107,7 @@ function get(url, opts) {
       port: u.port || (u.protocol === 'https:' ? 443 : 80),
       path: (u.pathname || '/') + (u.search || ''),
       method: 'GET',
+      ca: opts.ca || undefined,
       lookup: guardedLookup,
       headers: {
         'User-Agent': UA,
@@ -90,7 +124,7 @@ function get(url, opts) {
         try { next = new URLc(res.headers.location, u).href; } catch (e) { return finish(new Error('bad redirect')); }
         clearTimeout(timer);
         done = true;
-        get(next, { maxBytes: maxBytes, timeout: timeout, accept: opts.accept, redirects: redirects - 1 }).then(resolve, reject);
+        get(next, { maxBytes: maxBytes, timeout: timeout, accept: opts.accept, redirects: redirects - 1, ca: opts.ca }).then(resolve, reject);
         return;
       }
       var stream = res;
@@ -351,6 +385,7 @@ module.exports = {
   findSiteIcon: findSiteIcon,
   youtubeInfo: youtubeInfo,
   youtubeThumb: youtubeThumb,
+  trustBundle: trustBundle,
   parsePage: parsePage,            // exported for dev/test-parsers.js
   readTag: readTag
 };

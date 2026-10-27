@@ -21,7 +21,7 @@ function mkdirp(dir) {
 }
 
 function emptyState() {
-  return { v: 1, rev: 1, password: null, sessions: [], photos: [], shortcuts: [] };
+  return { v: 1, rev: 1, password: null, sessions: [], photos: [], shortcuts: [], weather: null, inputs: null };
 }
 
 // Picks the first candidate directory that can really be written and read back.
@@ -65,6 +65,9 @@ Store.prototype._read = function (file) {
   s.sessions = Array.isArray(data.sessions) ? data.sessions : [];
   s.photos = Array.isArray(data.photos) ? data.photos : [];
   s.shortcuts = Array.isArray(data.shortcuts) ? data.shortcuts : [];
+  s.weather = cleanWeather(data.weather);
+  var inp = cleanInputs(data.inputs);
+  s.inputs = inp === undefined ? null : inp;
   return s;
 };
 
@@ -244,6 +247,58 @@ Store.prototype.reorderShortcuts = function (ids) {
   this.bump();
 };
 
+// The city picked on the phone: { place, latitude, longitude, timezone, unit }
+// or null. unit is 'celsius', 'fahrenheit' or null (use config.js / the TV).
+function cleanWeather(w) {
+  if (!w || typeof w !== 'object') return null;
+  var lat = Number(w.latitude);
+  var lon = Number(w.longitude);
+  if (!isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  var tz = typeof w.timezone === 'string' && /^[A-Za-z0-9_+\/-]{1,64}$/.test(w.timezone) ? w.timezone : 'auto';
+  return {
+    place: String(w.place == null ? '' : w.place).replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 80),
+    latitude: Math.round(lat * 10000) / 10000,
+    longitude: Math.round(lon * 10000) / 10000,
+    timezone: tz,
+    unit: w.unit === 'celsius' || w.unit === 'fahrenheit' ? w.unit : null
+  };
+}
+
+// HDMI tiles edited on the phone: [{ hdmi, label }] or null (use config.js).
+// An empty array is a real choice: no HDMI tiles. Returns undefined if invalid.
+function cleanInputs(list) {
+  if (list == null) return null;
+  if (!Array.isArray(list) || list.length > 8) return undefined;
+  var out = [];
+  var seen = {};
+  for (var i = 0; i < list.length; i++) {
+    var x = list[i] || {};
+    var n = Number(x.hdmi);
+    if (n !== Math.floor(n) || n < 1 || n > 8 || seen[n]) return undefined;
+    var label = String(x.label == null ? '' : x.label).replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 24);
+    if (!label) return undefined;
+    seen[n] = true;
+    out.push({ hdmi: n, label: label });
+  }
+  return out;
+}
+
+Store.prototype.setInputs = function (list) {
+  var clean = cleanInputs(list);
+  if (clean === undefined) return false;
+  this.state.inputs = clean;
+  this.bump();
+  return true;
+};
+
+Store.prototype.setWeather = function (w) {
+  var clean = cleanWeather(w);
+  if (w && !clean) return false;
+  this.state.weather = clean;
+  this.bump();
+  return true;
+};
+
 function safeList(dir) {
   try { return fs.readdirSync(dir); } catch (e) { return []; }
 }
@@ -256,6 +311,8 @@ module.exports = {
   Store: Store,
   pickDataDir: pickDataDir,
   mkdirp: mkdirp,
+  cleanWeather: cleanWeather,
+  cleanInputs: cleanInputs,
   unlinkQuiet: unlinkQuiet,
   PHOTO_ID: PHOTO_ID,
   SHORTCUT_ID: SHORTCUT_ID,

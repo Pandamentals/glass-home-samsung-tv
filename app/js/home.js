@@ -154,9 +154,23 @@
   // HDMI inputs from config.js, in the order chosen with Move left/right;
   // inputs not moved yet follow, in config order. (?inputs=1 shows two sample
   // inputs in preview.)
-  var inputDefs = cfg.preview && Q.inputs === '1'
-    ? [{ hdmi: 2, label: 'Games console' }, { hdmi: 3, label: 'Blu-ray' }]
-    : (cfg.inputs || []);
+  // A list saved on the phone (Settings > HDMI inputs) replaces config.js's.
+  var inputDefs = cfg.inputs || [];
+  function setInputDefs(st) {
+    if (cfg.preview && Q.inputs === '1') {
+      inputDefs = [{ hdmi: 2, label: 'Games console' }, { hdmi: 3, label: 'Blu-ray' }];
+      return;
+    }
+    inputDefs = st && Array.isArray(st.inputs) ? st.inputs : (cfg.inputs || []);
+  }
+  setInputDefs(null);
+  function inputIconFor(label) {
+    var list = cfg.inputIcons || [];
+    for (var i = 0; i < list.length; i++) {
+      try { if (new RegExp(list[i].match, 'i').test(label)) return list[i].icon; } catch (e) { /* bad pattern: skip */ }
+    }
+    return null;
+  }
   function orderedInputs() {
     // Ranked from the unsorted list: older engines sort in place, so indexOf
     // on the array being sorted can move under the comparator.
@@ -181,7 +195,7 @@
     orderedInputs().forEach(function (inp) {
       var k = 'in:' + inp.hdmi;
       if (photoService && hidden.indexOf(k) >= 0) return;    // as for apps
-      list.push({ kind: 'input', key: k, appKey: k, label: inp.label, hdmi: inp.hdmi, icon: inp.icon || null });
+      list.push({ kind: 'input', key: k, appKey: k, label: inp.label, hdmi: inp.hdmi, icon: inp.icon || inputIconFor(inp.label) });
     });
     if (!photoService) return list;
     shortcuts.forEach(function (s) {
@@ -317,7 +331,7 @@
     } else if (it.kind === 'input') {
       if (it.icon) {
         img = new Image();
-        img.className = 'input-icon';
+        img.className = 'input-icon bleed';
         img.alt = '';
         img.onerror = function () { img.remove(); face.insertBefore(div('name-fallback', it.label), face.firstChild); };
         img.src = it.icon;
@@ -816,12 +830,24 @@
   }
 
   // ---------- service ----------
+  // First run on a service with no HDMI list yet: hand it config.js's, so the
+  // phone's HDMI card starts with the tiles the dock already shows.
+  var seeded = false;
+  function seedInputs(st) {
+    if (seeded || cfg.preview || !st || st.inputs !== null && st.inputs !== undefined) return;
+    seeded = true;
+    if (cfg.inputs && cfg.inputs.length) D.seedInputs(cfg.inputs).catch(function () { seeded = false; });
+  }
+
   function refresh() {
     if (!photoService) return Promise.resolve({ online: false });
     return D.refresh().then(function (r) {
       serviceUp = r.online;
       if (r.changed) {
         shortcuts = (r.state && r.state.shortcuts) || [];
+        if (GH.weather) GH.weather.apply((r.state && r.state.weather) || null);
+        setInputDefs(r.state);
+        seedInputs(r.state);
         rebuildDock();
         if (backdrop) updatePhotos();
       }
@@ -937,6 +963,8 @@
     if (cachedApps && cachedApps.apps) apps = cachedApps.apps;
     var st = photoService ? D.cached() : null;
     shortcuts = (st && st.shortcuts) || [];
+    if (GH.weather) GH.weather.apply((st && st.weather) || null);
+    setInputDefs(st);
     focusKey = ls.get('gh.focus');
     rebuildDock();
 

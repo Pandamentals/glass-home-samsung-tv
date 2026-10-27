@@ -9,6 +9,9 @@
  * is inserted as HTML: numbers are rounded, labels come from the table below,
  * and the icons are drawn here.
  *
+ * The place comes from the city picked on the phone website (Settings >
+ * Weather; home.js passes it to GH.weather.apply), else from config.js.
+ *
  * Preview (desktop browser): add ?wx=mock to use built-in sample data.
  */
 (function () {
@@ -17,12 +20,29 @@
   var cfg = GH.config && GH.config.weather;
   var root = document.getElementById('weather');
   var mockWx = !!(GH.config && GH.config.preview && GH.query && GH.query.wx === 'mock');
-  // Off until a location is set in config.js (?wx=mock in preview shows sample data).
   if (!cfg || !root) return;
-  if (!mockWx && (cfg.enabled === false || (!cfg.latitude && !cfg.longitude))) return;
 
-  var FAHRENHEIT = cfg.temperatureUnit === 'fahrenheit';
-  var KEY = 'gh.weather.v1' + (FAHRENHEIT ? '.f' : '');   // a unit change never shows the old unit's cache
+  // Where and in which unit, or null while no city is set (?wx=mock in preview
+  // shows sample data). The phone's pick wins over config.js.
+  var cur = null;
+  var KEY = 'gh.weather.v2';
+  function sig() {
+    return cur ? [cur.latitude, cur.longitude, cur.timezone, cur.fahrenheit ? 'f' : 'c'].join('|') : '';
+  }
+  function resolve(pick) {
+    if (pick && isFinite(pick.latitude) && isFinite(pick.longitude)) {
+      return {
+        place: pick.place || '', latitude: pick.latitude, longitude: pick.longitude,
+        timezone: pick.timezone || 'auto',
+        fahrenheit: pick.unit ? pick.unit === 'fahrenheit' : cfg.temperatureUnit === 'fahrenheit'
+      };
+    }
+    if (cfg.enabled === false || (!cfg.latitude && !cfg.longitude)) return null;
+    return {
+      place: cfg.place || '', latitude: cfg.latitude, longitude: cfg.longitude,
+      timezone: cfg.timezone || 'auto', fahrenheit: cfg.temperatureUnit === 'fahrenheit'
+    };
+  }
   var HIDE_AFTER = 12 * 3600 * 1000;    // older than this: hide rather than mislead
   var NOW_STALE = 3 * 3600 * 1000;      // older than this: drop the "now" temperature
   var REFRESH = cfg.refreshMs || 30 * 60 * 1000;
@@ -191,7 +211,7 @@
   }
 
   function render() {
-    var rec = last;
+    var rec = cur || mock ? last : null;
     var age = rec ? Date.now() - rec.at : Infinity;
     if (!rec || !valid(rec.data) || age > HIDE_AFTER) { root.classList.remove('on'); return; }
     var j = rec.data;
@@ -230,18 +250,18 @@
       day.appendChild(el('div', 'wx-rain', num(rain[i]) && rain[i] >= 20 ? Math.round(rain[i]) + '%' : ''));
       row.appendChild(day);
     }
-    document.getElementById('wx-place').textContent = cfg.place || '';
+    document.getElementById('wx-place').textContent = (cur && cur.place) || '';
     root.classList.toggle('stale-now', !showNow);
     root.classList.add('on');
   }
 
   function url() {
-    return 'https://api.open-meteo.com/v1/forecast?latitude=' + encodeURIComponent(cfg.latitude) +
-      '&longitude=' + encodeURIComponent(cfg.longitude) +
+    return 'https://api.open-meteo.com/v1/forecast?latitude=' + encodeURIComponent(cur.latitude) +
+      '&longitude=' + encodeURIComponent(cur.longitude) +
       '&current=temperature_2m,weather_code,is_day' +
       '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
-      (FAHRENHEIT ? '&temperature_unit=fahrenheit' : '') +
-      '&timezone=' + encodeURIComponent(cfg.timezone || 'auto') + '&forecast_days=8';
+      (cur.fahrenheit ? '&temperature_unit=fahrenheit' : '') +
+      '&timezone=' + encodeURIComponent(cur.timezone) + '&forecast_days=8';
   }
 
   function sample() {
@@ -261,12 +281,14 @@
   var loading = false;
   function load() {
     if (mock) { last = { at: Date.now(), data: sample() }; render(); return; }
+    if (!cur) { render(); return; }
     if (loading || !window.fetch) { render(); return; }
     loading = true;
     var ctrl = window.AbortController ? new window.AbortController() : null;
     var guard = ctrl ? setTimeout(function () { ctrl.abort(); }, 15000) : null;
     var opts = { cache: 'no-store', credentials: 'omit' };
     if (ctrl) opts.signal = ctrl.signal;
+    var want = sig();
     window.fetch(url(), opts)
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -274,7 +296,8 @@
       })
       .then(function (j) {
         if (!valid(j)) throw new Error('unexpected weather data');
-        last = { at: Date.now(), data: j };
+        if (sig() !== want) return;              // the city changed while this was in flight
+        last = { at: Date.now(), data: j, sig: want };
         writeCache(last);
       })
       .catch(function () { /* keep the cached forecast while it is recent */ })
@@ -297,8 +320,24 @@
     startTimer();
   });
 
-  last = readCache();
-  render();
-  load();
-  startTimer();
+  // Called by home.js with the phone's pick (or null) at start-up and whenever
+  // the service state changes. A new city or unit starts clean and loads at once.
+  function apply(pick) {
+    var before = sig();
+    cur = resolve(pick);
+    if (sig() === before && started) return;
+    started = true;
+    loading = false;
+    last = null;
+    if (cur) {
+      var c = readCache();
+      if (c && c.sig === sig()) last = c;
+    }
+    render();
+    load();
+    startTimer();
+  }
+
+  var started = false;
+  GH.weather = { apply: apply };      // home.js makes the first call, with the cached pick
 }());

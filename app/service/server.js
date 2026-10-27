@@ -18,6 +18,7 @@ var http = require('http');
 var fs = require('fs');
 var path = require('path');
 var urlmod = require('url');
+var URLc = require('./urlshim.js').URL;
 var crypto = require('crypto');
 var netu = require('./netutil.js');
 var imgu = require('./imageutil.js');
@@ -100,7 +101,7 @@ function normalizeWebUrl(raw) {
   if (!s || s.length > 2048) return null;
   if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) s = 'https://' + s.replace(/^\/\//, '');
   var u;
-  try { u = new urlmod.URL(s); } catch (e) { return null; }
+  try { u = new URLc(s); } catch (e) { return null; }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
   if (u.username || u.password || !u.hostname) return null;
   if (!/^[a-z0-9.[\]:-]+$/i.test(u.hostname)) return null;
@@ -108,7 +109,7 @@ function normalizeWebUrl(raw) {
 }
 
 function hostLabel(href) {
-  try { return new urlmod.URL(href).hostname.replace(/^www\./, ''); } catch (e) { return 'Website'; }
+  try { return new URLc(href).hostname.replace(/^www\./, ''); } catch (e) { return 'Website'; }
 }
 
 function createService(opts) {
@@ -158,6 +159,7 @@ function createService(opts) {
   }
 
   function getFetcher() {
+    if (opts.fetcher) return opts.fetcher;        // test hook: { get(url, opts) }
     if (fetcher || fetcherError) return fetcher;
     try { fetcher = require('./fetcher.js'); } catch (e) { fetcherError = e; note('fetcher unavailable: ' + e.message); }
     return fetcher;
@@ -705,6 +707,31 @@ function createService(opts) {
       });
     }
 
+    if (s[1] === 'weather') {
+      if (s.length === 2 && m === 'GET') return sendJSON(res, 200, { weather: store.state.weather });
+      if (s.length === 2 && m === 'PUT') {
+        return readJSONBody(req, 4096).then(function (body) {
+          if (!store.setWeather(body)) return sendJSON(res, 400, { error: 'bad-place' });
+          sendJSON(res, 200, { weather: store.state.weather });
+        }).catch(function (e) { bodyError(res, e); });
+      }
+      if (s.length === 2 && m === 'DELETE') {
+        store.setWeather(null);
+        return sendJSON(res, 200, { weather: null });
+      }
+      if (s.length === 3 && s[2] === 'search' && m === 'GET') return searchPlaces(ctx);
+    }
+
+    if (s[1] === 'inputs' && s.length === 2) {
+      if (m === 'GET') return sendJSON(res, 200, { inputs: store.state.inputs });
+      if (m === 'PUT') {
+        return readJSONBody(req, 4096).then(function (body) {
+          if (!Array.isArray(body.inputs) || !store.setInputs(body.inputs)) return sendJSON(res, 400, { error: 'bad-inputs' });
+          sendJSON(res, 200, { inputs: store.state.inputs });
+        }).catch(function (e) { bodyError(res, e); });
+      }
+    }
+
     if (s[1] === 'photos') {
       if (s.length === 2 && m === 'GET') {
         var list = store.state.photos.slice().reverse().map(photoView);
@@ -783,6 +810,32 @@ function createService(opts) {
     return refuseBody(req, res, 404, { error: 'not-found' });
   }
 
+  // City search for the phone's Settings > Weather, via Open-Meteo's geocoder.
+  function searchPlaces(ctx) {
+    var res = ctx.res;
+    var q = String(ctx.query.q || '').replace(/\s+/g, ' ').trim();
+    if (q.length < 2 || q.length > 80) return sendJSON(res, 400, { error: 'query' });
+    var f = getFetcher();
+    if (!f) return sendJSON(res, 503, { error: 'unavailable' });
+    var url = 'https://geocoding-api.open-meteo.com/v1/search?count=8&language=en&format=json&name=' + encodeURIComponent(q);
+    return f.get(url, { accept: 'application/json', maxBytes: 128 * 1024, timeout: 8000 }).then(function (r) {
+      if (r.status !== 200) return sendJSON(res, 502, { error: 'lookup-failed' });
+      var j = JSON.parse(r.body.toString('utf8'));
+      var out = [];
+      (Array.isArray(j.results) ? j.results : []).forEach(function (x) {
+        var w = storeMod.cleanWeather({
+          place: [x.name, x.admin1, x.country_code].filter(function (v) { return typeof v === 'string' && v; }).join(', '),
+          latitude: x.latitude, longitude: x.longitude, timezone: x.timezone
+        });
+        if (w && w.place) out.push(w);
+      });
+      sendJSON(res, 200, { results: out });
+    }).catch(function (e) {
+      note('weather search failed: ' + (e && e.message));
+      sendJSON(res, 502, { error: 'lookup-failed' });
+    });
+  }
+
   function trimCache() {
     var files;
     try { files = fs.readdirSync(store.cacheDir); } catch (e) { return; }
@@ -834,6 +887,8 @@ function createService(opts) {
       password: pw ? { id: pw.id, generated: !!pw.generated, plain: plain && plain.id === pw.id ? plain.value : null } : null,
       photos: store.state.photos.map(function (p) { return { id: p.id, added: p.added, w: p.w, h: p.h, url: '/media/photos/' + p.id + '.jpg' }; }),
       shortcuts: store.state.shortcuts.map(shortcutView),
+      weather: store.state.weather,
+      inputs: store.state.inputs,
       limits: limitsView()
     };
   }
@@ -852,6 +907,14 @@ function createService(opts) {
       var value = auth.generatePassword();
       return setPassword(value, true).then(function (rec) {
         sendJSON(res, 200, { id: rec.id, plain: value });
+      }).catch(function (e) { bodyError(res, e); });
+    }
+    // The TV app's config.js list, handed over once so the phone can edit it.
+    // Never overwrites a list that is already saved.
+    if (s[1] === 'inputs' && s.length === 2 && m === 'PUT') {
+      return readJSONBody(req, 4096).then(function (body) {
+        if (store.state.inputs === null && Array.isArray(body.inputs) && !store.setInputs(body.inputs)) return sendJSON(res, 400, { error: 'bad-inputs' });
+        sendJSON(res, 200, { rev: store.state.rev });
       }).catch(function (e) { bodyError(res, e); });
     }
     if (s[1] === 'shortcuts' && s[2] === 'order' && s.length === 3 && m === 'POST') {

@@ -50,7 +50,7 @@
     pollEveryMs: 20000,
     longPressMs: 700,
     // Date and time format, e.g. 'en-AU', 'en-GB', 'en-US'. Empty: the TV's own.
-    locale: '',
+    locale: 'en-US',
 
     // How YouTube shortcuts are handed to the YouTube app. 'uri' sends
     // https://www.youtube.com/watch?v=...; 'payload' is Samsung's Smart Hub
@@ -61,7 +61,8 @@
     youtubeMode: 'uri',
 
     // Weather under the clock (js/weather.js), from Open-Meteo (free, no key).
-    // Off until you set your location. Find coordinates with
+    // Off until you pick a city on the phone website (Settings > Weather); that
+    // pick overrides these values. Or set them here: find coordinates with
     // https://geocoding-api.open-meteo.com/v1/search?name=YOUR+TOWN
     weather: {
       enabled: false,
@@ -69,7 +70,7 @@
       latitude: 0,
       longitude: 0,
       timezone: 'auto',          // or an IANA name such as 'Europe/London'
-      temperatureUnit: 'celsius',   // or 'fahrenheit'
+      temperatureUnit: 'fahrenheit',   // or 'celsius'
       refreshMs: 30 * 60 * 1000
     },
 
@@ -91,23 +92,37 @@
     // load, Samsung TV Plus is a system app), so those default to name tiles.
     apps: [
       { key: 'youtube', label: 'YouTube', storeId: '111299001912', ids: ['9Ur5IzDKqV.TizenYouTube', 'com.samsung.tv.cobalt-yt'],
-        names: ['^youtube$'], icon: false },
+        names: ['^youtube$'], icon: 'img/apps/youtube.svg' },
       { key: 'netflix', label: 'Netflix', storeId: '11101200001', ids: ['org.tizen.netflix-app', 'RN1MCdNq8t.Netflix'],
-        names: ['^netflix$', '\\bnetflix\\b'] },
+        names: ['^netflix$', '\\bnetflix\\b'], icon: 'img/apps/netflix.svg' },
       { key: 'prime', label: 'Prime Video', storeId: '3201512006785', ids: ['org.tizen.primevideo', 'org.tizen.ignition', 'evKhCgZelL.AmazonIgnitionLauncher2'],
-        names: ['^prime video$', '^amazon prime video$', '\\bprime video\\b'], icon: false },
-      { key: 'tvplus', label: 'Samsung TV Plus', ids: ['com.samsung.tv.tvPlusDeeplinker', 'com.samsung.tv.tvplus'],
-        names: ['^samsung tv plus$', '^tv plus$', 'samsung tv plus'], icon: false },
+        names: ['^prime video$', '^amazon prime video$', '\\bprime video\\b'], icon: 'img/apps/prime.svg' },
       { key: 'disney', label: 'Disney+', storeId: '3201901017640', ids: ['MCmYXNxgcu.DisneyPlus'],
         names: ['^disney plus$', '\\bdisney plus\\b', '^disney$'] },
-      { key: 'browser', label: 'Internet', ids: ['org.tizen.browser'],
-        names: ['^internet$', '^browser$'] }
+      { key: 'paramount', label: 'Paramount+', ids: ['rJyOSqC6Up.CBSAllAccess'],
+        names: ['^paramount plus$', '\\bparamount plus\\b', '^paramount$'] },
+      { key: 'peacock', label: 'Peacock', ids: ['gzcc4LRFBF.Peacock'],
+        names: ['^peacock$', '^peacock tv$', '\\bpeacock\\b'] }
     ],
 
     // HDMI inputs on the dock, after the apps. `hdmi` is the port number; OK
     // switches the TV to it and opens Samsung's TV viewer full screen.
     // `icon`: optional, a path under app/; without it the tile shows `label`.
     // e.g. { hdmi: 1, label: 'Games console', icon: 'img/inputs/console.png' }
-    inputs: []
+    // The starting list. The first time the TV app runs it hands this to the
+    // photo service; after that the list is edited on the phone website
+    // (Settings > HDMI inputs) and changes here are ignored. Without the photo
+    // service this list is used as it is.
+    inputs: [
+      { hdmi: 1, label: 'Fire Stick' },
+      { hdmi: 2, label: 'PS5' }
+    ],
+    // Full-tile icons for HDMI tiles, picked by the tile's name (case-insensitive
+    // regular expression), so they still apply after a rename on the phone. An
+    // input with its own `icon` above keeps that one.
+    inputIcons: [
+      { match: 'fire|amazon', icon: 'img/inputs/firetv.svg' },
+      { match: 'ps5|playstation|\\bps\\d', icon: 'img/inputs/ps5.svg' }
+    ]
   };
 }());

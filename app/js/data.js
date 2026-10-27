@@ -124,6 +124,13 @@
     });
   };
 
+  D.seedInputs = function (list) {
+    return request('PUT', withKey('/local/inputs'), { inputs: list }, 5000).then(function (r) {
+      if (r.status !== 200) throw new Error('service');
+      if (current) current.rev = 0;
+    });
+  };
+
   D.removeShortcut = function (id) {
     return request('DELETE', withKey('/local/shortcuts/' + encodeURIComponent(id)), undefined, 5000).then(function (r) {
       if (r.status !== 200) throw new Error('service');

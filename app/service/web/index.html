@@ -240,6 +240,33 @@ form { display: grid; gap: 10px; }
         <div class="kv"><span>Shortcuts</span><b id="set-sc"></b></div>
       </div>
       <div class="card glass">
+        <h2>Weather</h2>
+        <div class="kv"><span>City</span><b id="wx-cur">Not set</b></div>
+        <form id="wx-form" autocomplete="off">
+          <input id="wx-q" type="text" autocapitalize="words" autocorrect="off" spellcheck="false" placeholder="Search for a city" required minlength="2" maxlength="80">
+          <button class="btn secondary block" type="submit" id="wx-btn">Search</button>
+        </form>
+        <div id="wx-results"></div>
+        <div class="kv"><span>Units</span>
+          <div class="seg small" id="wx-units">
+            <button type="button" data-unit="">TV</button>
+            <button type="button" data-unit="fahrenheit">°F</button>
+            <button type="button" data-unit="celsius">°C</button>
+          </div>
+        </div>
+        <button class="btn danger block" type="button" id="wx-clear" hidden>Remove weather</button>
+        <p class="msg" id="wx-msg" aria-live="polite"></p>
+        <p class="hint">The forecast appears under the clock on the TV. Units: “TV” uses the setting in the TV app's config.</p>
+      </div>
+      <div class="card glass">
+        <h2>HDMI inputs</h2>
+        <div id="in-rows"></div>
+        <button class="btn secondary block" type="button" id="in-add">Add an input</button>
+        <button class="btn primary block" type="button" id="in-save">Save</button>
+        <p class="msg" id="in-msg" aria-live="polite"></p>
+        <p class="hint">Each input becomes a tile on the TV’s dock. The number is the one printed beside the socket on the TV.</p>
+      </div>
+      <div class="card glass">
         <h2>Change password</h2>
         <form id="pw-form" autocomplete="on">
           <input type="text" name="username" value="glass-home" autocomplete="username" hidden>
@@ -937,6 +964,8 @@ form { display: grid; gap: 10px; }
 
   // ---------- settings ----------
   function renderSettings() {
+    wxLoad();
+    inLoad();
     api('GET', '/api/me').then(function (r) {
       if (r.status !== 200) return;
       var l = r.data.limits;
@@ -946,6 +975,130 @@ form { display: grid; gap: 10px; }
       $('set-sc').textContent = l.shortcuts + ' of ' + l.maxShortcuts;
     });
   }
+
+  // ---------- weather ----------
+  var wx = { place: null };
+  function wxMsg(text, cls) { var m = $('wx-msg'); m.className = 'msg' + (cls ? ' ' + cls : ''); m.textContent = text; }
+  function wxShow(w) {
+    wx.place = w || null;
+    $('wx-cur').textContent = w ? w.place : 'Not set';
+    $('wx-clear').hidden = !w;
+    var unit = w && w.unit ? w.unit : '';
+    Array.prototype.forEach.call(document.querySelectorAll('#wx-units [data-unit]'), function (b) {
+      b.classList.toggle('on', b.getAttribute('data-unit') === unit);
+    });
+  }
+  function wxLoad() {
+    api('GET', '/api/weather').then(function (r) { if (r.status === 200) wxShow(r.data.weather); });
+  }
+  function wxSave(w, done) {
+    api('PUT', '/api/weather', w).then(function (r) {
+      if (r.status === 200) { wxShow(r.data.weather); wxMsg(done, 'good'); } else wxMsg('Couldn’t save it (' + r.status + ').', 'bad');
+    });
+  }
+  $('wx-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var box = $('wx-results');
+    box.textContent = '';
+    wxMsg('Searching…');
+    $('wx-btn').disabled = true;
+    api('GET', '/api/weather/search?q=' + encodeURIComponent($('wx-q').value)).then(function (r) {
+      $('wx-btn').disabled = false;
+      if (r.status !== 200) { wxMsg(r.status === 0 ? 'The TV can’t be reached.' : 'The city search isn’t available right now.', 'bad'); return; }
+      var list = r.data.results || [];
+      wxMsg(list.length ? 'Tap your city.' : 'No match. Try another spelling.');
+      list.forEach(function (w) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn secondary block';
+        b.textContent = w.place;
+        b.addEventListener('click', function () {
+          box.textContent = '';
+          w.unit = wx.place && wx.place.unit ? wx.place.unit : null;
+          wxSave(w, 'Saved. The TV shows it within a minute.');
+        });
+        box.appendChild(b);
+      });
+    });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('#wx-units [data-unit]'), function (b) {
+    b.addEventListener('click', function () {
+      if (!wx.place) { wxMsg('Pick a city first.'); return; }
+      var w = JSON.parse(JSON.stringify(wx.place));
+      w.unit = b.getAttribute('data-unit') || null;
+      wxSave(w, 'Units saved.');
+    });
+  });
+  $('wx-clear').addEventListener('click', function () {
+    api('DELETE', '/api/weather').then(function (r) {
+      if (r.status === 200) { wxShow(null); wxMsg('Weather removed. The TV falls back to its config.', 'good'); }
+    });
+  });
+
+  // ---------- HDMI inputs ----------
+  var ins = { rows: [] };
+  function inMsg(text, cls) { var m = $('in-msg'); m.className = 'msg' + (cls ? ' ' + cls : ''); m.textContent = text; }
+  function inDraw() {
+    var box = $('in-rows');
+    box.textContent = '';
+    ins.rows.forEach(function (row, i) {
+      var line = document.createElement('div');
+      line.className = 'kv';
+      var sel = document.createElement('select');
+      sel.setAttribute('aria-label', 'HDMI port');
+      for (var n = 1; n <= 8; n++) {
+        var o = document.createElement('option');
+        o.value = String(n);
+        o.textContent = 'HDMI ' + n;
+        if (n === row.hdmi) o.selected = true;
+        sel.appendChild(o);
+      }
+      sel.addEventListener('change', function () { row.hdmi = Number(sel.value); });
+      var txt = document.createElement('input');
+      txt.type = 'text';
+      txt.maxLength = 24;
+      txt.placeholder = 'Name';
+      txt.value = row.label;
+      txt.addEventListener('input', function () { row.label = txt.value; });
+      var del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'btn ghost';
+      del.textContent = 'Remove';
+      del.addEventListener('click', function () { ins.rows.splice(i, 1); inDraw(); });
+      line.appendChild(sel);
+      line.appendChild(txt);
+      line.appendChild(del);
+      box.appendChild(line);
+    });
+  }
+  function inLoad() {
+    api('GET', '/api/inputs').then(function (r) {
+      if (r.status !== 200) return;
+      ins.rows = (r.data.inputs || []).map(function (x) { return { hdmi: x.hdmi, label: x.label }; });
+      inDraw();
+    });
+  }
+  $('in-add').addEventListener('click', function () {
+    var used = ins.rows.map(function (r) { return r.hdmi; });
+    var n = 1;
+    while (used.indexOf(n) >= 0 && n < 8) n++;
+    if (ins.rows.length >= 8) return;
+    ins.rows.push({ hdmi: n, label: '' });
+    inDraw();
+  });
+  $('in-save').addEventListener('click', function () {
+    var seen = {};
+    for (var i = 0; i < ins.rows.length; i++) {
+      var r = ins.rows[i];
+      if (!r.label.trim()) { inMsg('Give every input a name.', 'bad'); return; }
+      if (seen[r.hdmi]) { inMsg('HDMI ' + r.hdmi + ' is listed twice.', 'bad'); return; }
+      seen[r.hdmi] = true;
+    }
+    inMsg('Saving…');
+    api('PUT', '/api/inputs', { inputs: ins.rows }).then(function (r) {
+      if (r.status === 200) { inMsg('Saved. The TV updates within a minute.', 'good'); } else inMsg('Couldn’t save it (' + r.status + ').', 'bad');
+    });
+  });
 
   $('pw-form').addEventListener('submit', function (e) {
     e.preventDefault();

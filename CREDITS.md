@@ -26,6 +26,12 @@ Commons. Each licence was checked on its file page. Thank you to the photographe
 Weather data by [Open-Meteo](https://open-meteo.com/), licensed under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (credited on screen).
 
+## App logos
+
+`app/img/apps/youtube.svg`, `netflix.svg` and `prime.svg` are the
+[Simple Icons](https://simpleicons.org/) glyphs (v13.0.0, CC0 for the artwork),
+recoloured. YouTube, Netflix and Prime Video are trademarks of their owners.
+
 ## HDMI inputs
 
 The input switching in `app/js/platform.js` (`switchInput`) is ported from
